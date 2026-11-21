@@ -28,7 +28,7 @@ MODE = (os.environ.get("MODE") or "create").lower()
 SERVER_TYPE = "cx33"
 LOCATIONS = ["nbg1", "fsn1", "hel1"]  # order = priority
 IMAGE = "ubuntu-24.04"
-SERVER_NAME = "bcube-prod"
+SERVER_NAME = "bcube-stage"
 LABELS = "project=bcube,role=app"
 USER_DATA_FILE = "cloud-init.yaml"  # only used if the file exists
 
