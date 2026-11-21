@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Pollt die Hetzner Cloud API und erstellt einen Server, sobald der Typ verfügbar ist.
+"""Polls the Hetzner Cloud API and creates a server as soon as the type is available.
 
-Nur Standardbibliothek, keine Abhängigkeiten.
+Standard library only, no dependencies.
 
-Umgebungsvariablen:
-  HCLOUD_TOKEN  API Token (Pflicht)
-  SSH_KEY_NAME  Name des SSH Keys in Hetzner (Pflicht)
-  NTFY_TOPIC    Optional: ntfy.sh Topic für Push Nachrichten
-  MODE          create (Standard) oder check (erstellt nichts, kostet nichts)
+Environment variables:
+  HCLOUD_TOKEN  API token (required)
+  SSH_KEY_NAME  Name of the SSH key in Hetzner (required)
+  NTFY_TOPIC    Optional: ntfy.sh topic for push notifications
+  MODE          create (default) or check (creates nothing, costs nothing)
 
-Alles andere ist unten fest einprogrammiert.
+Everything else is hardcoded below.
 """
 
 import json
@@ -26,13 +26,13 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
 MODE = (os.environ.get("MODE") or "create").lower()
 
 SERVER_TYPE = "cx33"
-LOCATIONS = ["nbg1", "fsn1", "hel1"]  # Reihenfolge = Priorität
+LOCATIONS = ["nbg1", "fsn1", "hel1"]  # order = priority
 IMAGE = "ubuntu-24.04"
 SERVER_NAME = "bcube-prod"
 LABELS = "project=bcube,role=app"
-USER_DATA_FILE = "cloud-init.yaml"  # wird nur genutzt, wenn die Datei existiert
+USER_DATA_FILE = "cloud-init.yaml"  # only used if the file exists
 
-# Fehlercodes, die "gerade nicht lieferbar" bedeuten. Alles andere ist ein echter Fehler.
+# Error codes meaning "not available right now". Anything else is a real error.
 UNAVAILABLE_CODES = {"resource_unavailable", "placement_error"}
 
 
@@ -75,7 +75,7 @@ def error_message(payload):
 
 
 def fatal(message):
-    print("FEHLER: " + message, file=sys.stderr)
+    print("ERROR: " + message, file=sys.stderr)
     sys.exit(1)
 
 
@@ -87,7 +87,7 @@ def set_output(key, value):
 
 
 def notify(title, message):
-    """Push Nachricht über ntfy.sh. Der Titel muss reines ASCII sein."""
+    """Push notification via ntfy.sh. The title must be plain ASCII."""
     print(f"[notify] {title}: {message}")
     if not NTFY_TOPIC:
         return
@@ -99,8 +99,8 @@ def notify(title, message):
     )
     try:
         urllib.request.urlopen(req, timeout=15).close()
-    except Exception as err:  # Benachrichtigung darf den Lauf nicht scheitern lassen
-        print(f"ntfy fehlgeschlagen: {err}")
+    except Exception as err:  # a failed notification must not fail the run
+        print(f"ntfy failed: {err}")
 
 
 def parse_labels(text):
@@ -116,40 +116,38 @@ def existing_servers():
     selector = urllib.parse.quote(LABELS.replace(" ", ""))
     status, payload = api("GET", f"/servers?label_selector={selector}")
     if status != 200:
-        fatal(f"Serverliste nicht lesbar: HTTP {status} {error_code(payload)} {error_message(payload)}")
+        fatal(f"Could not read server list: HTTP {status} {error_code(payload)} {error_message(payload)}")
     return payload.get("servers", [])
 
 
 def check_availability():
+    """Print availability per location (the /datacenters endpoint is gone, HTTP 410)."""
     status, payload = api("GET", "/server_types?name=" + urllib.parse.quote(SERVER_TYPE))
     types = payload.get("server_types", [])
     if status != 200 or not types:
-        fatal(f"Servertyp {SERVER_TYPE} nicht gefunden: HTTP {status} {error_code(payload)}")
-    type_id = types[0]["id"]
-
-    status, payload = api("GET", "/datacenters?per_page=50")
-    if status != 200:
-        fatal(f"Rechenzentren nicht lesbar: HTTP {status} {error_code(payload)}")
-    print(f"Verfügbarkeit von {SERVER_TYPE} (id {type_id}):")
-    for dc in payload.get("datacenters", []):
-        location = dc["location"]["name"]
-        available = type_id in dc["server_types"]["available"]
-        print(f"  {dc['name']} ({location}): {'verfügbar' if available else 'nicht verfügbar'}")
+        fatal(f"Server type {SERVER_TYPE} not found: HTTP {status} {error_code(payload)}")
+    locations = types[0].get("locations") or []
+    if not locations:
+        fatal(f"No location info returned for {SERVER_TYPE}: {json.dumps(types[0])[:500]}")
+    print(f"Availability of {SERVER_TYPE}:")
+    for loc in locations:
+        state = "available" if loc.get("available") else "unavailable"
+        print(f"  {loc.get('name', '?')}: {state}")
 
 
 def verify_ssh_key():
-    """Bricht ab, wenn der SSH Key in Hetzner nicht existiert.
+    """Abort if the SSH key does not exist in Hetzner.
 
-    Muss VOR dem Erstellen laufen: Sonst kann es passieren, dass der Server
-    verfügbar wäre, die Anfrage aber wegen des Keys scheitert und man es erst
-    im Moment der Verfügbarkeit bemerkt.
+    Must run BEFORE creating: otherwise the server could be available while the
+    request fails because of the key, and you would only notice at the exact
+    moment of availability.
     """
     status, payload = api("GET", "/ssh_keys?name=" + urllib.parse.quote(SSH_KEY_NAME))
     if status != 200:
-        fatal(f"SSH Keys nicht lesbar: HTTP {status} {error_code(payload)} {error_message(payload)}")
+        fatal(f"Could not read SSH keys: HTTP {status} {error_code(payload)} {error_message(payload)}")
     if not payload.get("ssh_keys"):
-        fatal(f"SSH Key '{SSH_KEY_NAME}' existiert in Hetzner nicht. Kein Server wird erstellt.")
-    print(f"SSH Key '{SSH_KEY_NAME}' gefunden.")
+        fatal(f"SSH key '{SSH_KEY_NAME}' does not exist in Hetzner. No server will be created.")
+    print(f"SSH key '{SSH_KEY_NAME}' found.")
 
 
 def build_body(location):
@@ -171,17 +169,17 @@ def build_body(location):
 
 def main():
     if not TOKEN:
-        fatal("HCLOUD_TOKEN fehlt")
+        fatal("HCLOUD_TOKEN is missing")
     if not SSH_KEY_NAME:
-        fatal("SSH_KEY_NAME fehlt")
+        fatal("SSH_KEY_NAME is missing")
     if MODE not in ("create", "check"):
-        fatal(f"Unbekannter MODE: {MODE}")
+        fatal(f"Unknown MODE: {MODE}")
 
     try:
         servers = existing_servers()
         if servers:
             names = ", ".join(s.get("name", "?") for s in servers)
-            print(f"Es existiert bereits ein Server mit den Labels {LABELS}: {names}. Nichts zu tun.")
+            print(f"A server with labels {LABELS} already exists: {names}. Nothing to do.")
             set_output("done", "true")
             return 0
 
@@ -195,26 +193,26 @@ def main():
             status, payload = api("POST", "/servers", build_body(location))
             if status in (200, 201):
                 server = payload.get("server", {})
-                ipv4 = ((server.get("public_net") or {}).get("ipv4") or {}).get("ip", "unbekannt")
+                ipv4 = ((server.get("public_net") or {}).get("ipv4") or {}).get("ip", "unknown")
                 notify(
-                    "Hetzner Server erstellt",
-                    f"{SERVER_NAME} ({SERVER_TYPE}) in {location} ist angelegt. IPv4: {ipv4}. "
-                    "Ab jetzt laeuft die stuendliche Abrechnung.",
+                    "Hetzner server created",
+                    f"{SERVER_NAME} ({SERVER_TYPE}) in {location} has been created. IPv4: {ipv4}. "
+                    "Hourly billing has started.",
                 )
                 set_output("done", "true")
                 set_output("created", "true")
                 return 0
             code = error_code(payload)
             if code in UNAVAILABLE_CODES:
-                print(f"{location}: {SERVER_TYPE} nicht verfügbar ({code})")
+                print(f"{location}: {SERVER_TYPE} unavailable ({code})")
                 continue
             fatal(f"{location}: HTTP {status} {code} {error_message(payload)}")
 
-        print(f"{SERVER_TYPE} ist an keinem Standort verfügbar. Nächster Versuch beim nächsten Lauf.")
+        print(f"{SERVER_TYPE} is unavailable at every location. Will retry on the next run.")
         return 0
     except NetworkError as err:
-        # Kurzzeitige Netzwerkprobleme sollen keinen roten Lauf und keine Mail erzeugen.
-        print(f"Netzwerkproblem, überspringe diesen Lauf: {err}")
+        # Brief network problems should not cause a red run or an email.
+        print(f"Network problem, skipping this run: {err}")
         return 0
 
 

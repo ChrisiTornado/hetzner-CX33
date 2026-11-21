@@ -2,12 +2,12 @@ name: Poll Hetzner
 
 on:
   schedule:
-    # Alle 5 Minuten. Bei einem privaten Repository auf "*/30 * * * *" erhöhen (Laufminuten).
+    # Every 5 minutes. For a private repository, raise to "*/30 * * * *" (run minutes).
     - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       mode:
-        description: "check = nur Verfügbarkeit anzeigen (kostenlos), create = Server erstellen"
+        description: "check = only show availability (free), create = create the server"
         type: choice
         default: check
         options:
@@ -16,7 +16,7 @@ on:
 
 permissions:
   contents: read
-  actions: write # nötig, damit sich der Workflow nach Erfolg selbst deaktivieren darf
+  actions: write # required so the workflow can disable itself after success
 
 concurrency:
   group: poll-hetzner
@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Hetzner abfragen und ggf. Server erstellen
+      - name: Poll Hetzner and create server if available
         id: poll
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
@@ -38,7 +38,7 @@ jobs:
           MODE: ${{ github.event.inputs.mode || 'create' }}
         run: python3 poll_hetzner.py
 
-      - name: Workflow deaktivieren, wenn ein Server existiert
+      - name: Disable workflow once a server exists
         if: steps.poll.outputs.done == 'true'
         env:
           GH_TOKEN: ${{ github.token }}

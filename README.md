@@ -1,50 +1,62 @@
 # Hetzner Poller
 
-Dieses Repository fragt regelmäßig die Hetzner Cloud API ab und legt einen Server an, sobald der gewünschte Typ (Standard: CX33) lieferbar ist. Danach schickt es dir eine Push Nachricht und schaltet sich selbst ab.
+Polls the Hetzner Cloud API on a schedule and creates a **CX33** server the moment one becomes available. It then sends you a push notification and disables itself.
 
-Wichtig: Sobald der Server angelegt ist, läuft die stündliche Abrechnung. Das Skript erstellt höchstens einen Server (geprüft über Labels).
+> [!WARNING]
+> Hourly billing starts as soon as the server is created. The script creates **at most one** server (checked via labels).
 
-## Einrichtung
+## How it works
 
-1. In Hetzner ein eigenes Projekt für bcube anlegen.
-2. Im Projekt unter Sicherheit einen SSH Key hochladen und dir den Namen merken.
-3. Optional unter Firewalls eine Firewall anlegen (Eingehend 22, 80, 443) und den Namen merken.
-4. Unter Sicherheit, API Tokens einen Token mit Lesen und Schreiben erzeugen.
-5. In GitHub ein neues Repository anlegen und diese Dateien mit genau dieser Ordnerstruktur hochladen. Verwende ein öffentliches Repository mit neutralem Namen (zum Beispiel hcloud-poller), weil dort geplante Läufe kostenlos sind. Der Token liegt als Secret und steht nie im Code.
-6. Im Repository unter Settings, Secrets and variables, Actions:
+1. A schedule triggers the workflow **every 5 minutes**.
+2. If a server with the labels `project=bcube` and `role=app` already exists, nothing happens and the workflow disables itself.
+3. The SSH key is verified **before** any create attempt. If it is missing, the run fails immediately, so a wrong key can never block you at the moment a server is available.
+4. Each location is tried in order (`nbg1`, `fsn1`, `hel1`). If Hetzner answers `resource_unavailable` or `placement_error`, it moves on to the next one.
+5. On success you get a push notification with the IP address, and the workflow disables itself.
+6. On a real error (e.g. wrong token or SSH key name) the run fails red and GitHub emails you.
 
-   Secrets
-   * HCLOUD_TOKEN: der API Token
-   * NTFY_TOPIC: ein langer, zufälliger Name, zum Beispiel bcube-x7k2m9q4w8 (wer den Namen kennt, kann mitlesen)
+## Configuration
 
-   Variables
-   * SSH_KEY_NAME: Name des SSH Keys aus Schritt 2
-   * FIREWALL_NAME: Name der Firewall aus Schritt 3 (leer lassen, wenn keine)
-   * SERVER_NAME: optional, Standard bcube-prod
-   * SERVER_TYPE: optional, Standard cx33
-   * LOCATIONS: optional, Standard nbg1,fsn1,hel1
+Only three values are set in GitHub. Everything else is hardcoded in `poll_hetzner.py`.
 
-7. Auf dem Handy die App ntfy installieren und das Topic aus NTFY_TOPIC abonnieren.
+Go to **Settings → Secrets and variables → Actions**:
 
-## Testen
+| Name | Type | Required | Description |
+|---|---|:---:|---|
+| `HCLOUD_TOKEN` | Secret | yes | Hetzner API token with read & write permission |
+| `SSH_KEY_NAME` | Variable | yes | Exact name of the SSH key in your Hetzner project |
+| `NTFY_TOPIC` | Secret | no | Long, random ntfy.sh topic, e.g. `bcube-x7k2m9q4w8` (anyone who knows it can read it) |
 
-Im Repository unter Actions den Workflow Poll Hetzner wählen, Run workflow, Modus check. Das listet die Verfügbarkeit pro Standort auf und kostet nichts. Dort siehst du auch, ob Token und Variablen stimmen.
+Hardcoded defaults (edit them at the top of `poll_hetzner.py`):
 
-Mit Modus create kannst du den echten Ablauf einmal manuell auslösen. Das erzeugt einen echten Server, falls gerade einer lieferbar ist.
+| Setting | Value |
+|---|---|
+| Server type | `cx33` |
+| Locations | `nbg1`, `fsn1`, `hel1` (in priority order) |
+| Image | `ubuntu-24.04` |
+| Server name | `bcube-prod` |
+| Labels | `project=bcube,role=app` |
+| Cloud-init | `cloud-init.yaml` (used if present) |
 
-## Ablauf im Betrieb
+## Setup
 
-1. Der Zeitplan startet den Workflow alle 5 Minuten.
-2. Existiert schon ein Server mit den Labels project=bcube und role=app, passiert nichts weiter und der Workflow deaktiviert sich.
-3. Sonst wird der Reihe nach an jedem Standort versucht, den Server zu erstellen. Antwortet Hetzner mit resource_unavailable oder placement_error, geht es einfach weiter.
-4. Bei Erfolg kommt die Push Nachricht mit der IP Adresse, und der Workflow schaltet sich ab.
-5. Bei einem echten Fehler (zum Beispiel falscher Token oder SSH Key Name) bricht der Lauf rot ab, und GitHub schickt dir eine Mail.
+1. Create a dedicated project for bcube in Hetzner.
+2. Under **Security → SSH Keys**, upload an SSH key and note its name.
+3. Under **Security → API Tokens**, create a token with read & write access.
+4. Create a GitHub repository and push these files, keeping the folder structure. Use a **public** repository with a neutral name (e.g. `hcloud-poller`), because scheduled runs are free there. The token is stored as a secret and never appears in the code.
+5. Add the secrets and variable from the table above.
+6. Install the **ntfy** app on your phone and subscribe to the topic from `NTFY_TOPIC`.
 
-## Wichtige Hinweise
+## Testing
 
-1. In öffentlichen Repositories pausiert GitHub geplante Workflows nach 60 Tagen ohne Aktivität im Repository. Du bekommst dazu eine Mail. Dann den Workflow unter Actions wieder aktivieren, oder ab und zu einen kleinen Commit machen.
-2. Bei einem privaten Repository zählen die Laufminuten gegen dein Gratis Kontingent. Dann den Zeitplan in der Workflow Datei auf alle 30 Minuten stellen und dein Kontingent in den GitHub Einstellungen prüfen.
-3. GitHub startet geplante Läufe nicht sekundengenau, bei hoher Last kommen Verzögerungen vor.
-4. Nach Erfolg den API Token in Hetzner widerrufen, wenn du ihn nicht mehr brauchst, und den erstellten Server weder löschen noch umskalieren, damit der Preis erhalten bleibt.
-5. cloud-init.yaml ist eine einfache, ungetestete Vorlage. Pass sie an, bevor du sie einsetzt.
-6. Für einen ARM Server (CAX21) müsstest du SERVER_TYPE ändern, und deine Docker Images müssen für arm64 gebaut sein.
+In the repository go to **Actions → Poll Hetzner → Run workflow** and choose mode `check`. It verifies your token and SSH key and lists availability per location. It creates nothing and costs nothing.
+
+Mode `create` triggers the real flow once. It **creates an actual server** if one is available right now.
+
+## Notes
+
+- **Inactivity:** in public repositories GitHub pauses scheduled workflows after 60 days without repository activity (you get an email). Re-enable the workflow under Actions, or make an occasional small commit.
+- **Private repositories:** run minutes count against your free quota. Change the schedule in the workflow file to every 30 minutes and check your quota in the GitHub settings.
+- **Timing:** GitHub does not start scheduled runs to the second. Delays are common under high load.
+- **After success:** revoke the API token in Hetzner if you no longer need it, and neither delete nor resize the created server, so the price is kept.
+- **Cloud-init:** `cloud-init.yaml` is a simple, untested template. Adjust it before use.
+- **ARM:** for an ARM server (CAX21) change `SERVER_TYPE` in the script, and make sure your Docker images are built for `arm64`.
