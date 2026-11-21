@@ -29,7 +29,7 @@ SERVER_TYPE = "cx33"
 LOCATIONS = ["nbg1", "fsn1", "hel1"]  # order = priority
 IMAGE = "ubuntu-24.04"
 SERVER_NAME = "bcube-stage"
-LABELS = "project=bcube,role=app"
+LABELS = "project=bcube,role=stage"
 USER_DATA_FILE = "cloud-init.yaml"  # only used if the file exists
 
 # Error codes meaning "not available right now". Anything else is a real error.
