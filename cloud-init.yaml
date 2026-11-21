@@ -1,0 +1,11 @@
+#cloud-config
+# Minimale Erstkonfiguration für den Server. Ungetestet, bei Bedarf anpassen
+# (zum Beispiel Deploy User, Swap, Docker Daemon Einstellungen).
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - unattended-upgrades
+runcmd:
+  - systemctl enable --now docker

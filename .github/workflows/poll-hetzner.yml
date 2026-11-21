@@ -1,0 +1,45 @@
+name: Poll Hetzner
+
+on:
+  schedule:
+    # Alle 5 Minuten. Bei einem privaten Repository auf "*/30 * * * *" erhöhen (Laufminuten).
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "check = nur Verfügbarkeit anzeigen (kostenlos), create = Server erstellen"
+        type: choice
+        default: check
+        options:
+          - check
+          - create
+
+permissions:
+  contents: read
+  actions: write # nötig, damit sich der Workflow nach Erfolg selbst deaktivieren darf
+
+concurrency:
+  group: poll-hetzner
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hetzner abfragen und ggf. Server erstellen
+        id: poll
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SSH_KEY_NAME: ${{ vars.SSH_KEY_NAME }}
+          MODE: ${{ github.event.inputs.mode || 'create' }}
+        run: python3 poll_hetzner.py
+
+      - name: Workflow deaktivieren, wenn ein Server existiert
+        if: steps.poll.outputs.done == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow disable poll-hetzner.yml --repo "$GITHUB_REPOSITORY"
